@@ -1,0 +1,92 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Happy Birthday</title>
+  <link rel='stylesheet' href='Style2.css'>
+  
+  <style>
+
+@font-face {
+  font-family: 'CustomInner';
+  src: url('C:/Users/steve/Downloads/LTE/fonts/BebasNeue-Bold.otf');
+  font-display: swap;
+}
+
+
+/* Base layout + force center alignment */
+html, body {
+  margin: 0; padding: 0; overflow: hidden; background: #000;
+}
+body { text-align: center; }
+
+#myVideo { width: 100%; height: auto; display: block; }
+
+h1 {
+  font-family: "Anton", Impact, "Montserrat ExtraBold", sans-serif;
+  font-weight: 800; text-transform: uppercase; letter-spacing: 1px;
+  font-size: clamp(42px, 7.0vw, 120px);
+  color: #FFFF80;
+  text-align: center;
+  margin: .25em 0 .15em;
+}
+
+/* Positioned inner text */
+.innertext {
+  position: fixed;
+  left: calc(50% + 0px);
+  top: calc(50% + 0px);
+  transform: translate(-50%,-50%);
+  font-family: CustomInner;
+  font-weight: 800; text-transform: uppercase; letter-spacing: 1px;
+  font-size: clamp(42px, 7.0vw, 120px);
+  color: #8A8DF4;
+  text-align: center;
+  display: inline-block;
+  margin: 0;
+  z-index: 3;
+}
+
+
+h1, .innertext { -webkit-text-stroke: 3px #000;
+  text-shadow: 2px 2px 0 #000, -2px 2px 0 #000,
+               2px -2px 0 #000, -2px -2px 0 #000,
+               0 6px 16px rgba(0,0,0,.6); }
+
+
+h1, .innertext { text-shadow: 0 2px 10px rgba(0,0,0,.75); }
+
+
+h1 {
+  text-shadow:
+    0 0 10px rgba(255,255,128,0.9),
+    0 0 20px rgba(255,255,128,0.7),
+    0 0 35px rgba(255,255,128,0.5);
+}
+.innertext {
+  text-shadow:
+    0 0 10px rgba(138,141,244,0.9),
+    0 0 20px rgba(138,141,244,0.7),
+    0 0 35px rgba(138,141,244,0.5);
+}
+
+
+.innertext {
+  background: rgba(0,0,0,.55);
+  padding: .35em .7em;
+  border-radius: 12px;
+  box-shadow: 0 6px 20px rgba(0,0,0,.35);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+}
+
+</style>
+</head>
+<body>
+  <h1>Happy Birthday</h1>
+  <video autoplay muted loop id='myVideo'>
+    <source src="E:/github/LaserTagBirthdayNames/movie.mp4" type='video/mp4'>Video not found
+  </video>
+  <div class='innertext'>Johnny</div>
+</body>
+</html>
