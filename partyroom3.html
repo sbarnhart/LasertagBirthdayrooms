@@ -1,0 +1,123 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Happy Birthday</title>
+  <link rel='stylesheet' href='Style.css'>
+  <link href='https://fonts.googleapis.com/css2?family=Pacifico&display=swap' rel='stylesheet'>
+  <style>
+
+/* Base layout + force center alignment */
+html, body {
+  margin: 0; padding: 0; overflow: hidden; background: #000;
+}
+body { text-align: center; }
+
+#myVideo { width: 100%; height: auto; display: block; }
+
+h1 {
+  font-family: "Anton", Impact, "Montserrat ExtraBold", sans-serif;
+  font-weight: 800; text-transform: uppercase; letter-spacing: 1px;
+  font-size: clamp(42px, 7.0vw, 120px);
+  color: #FFFFFF;
+  text-align: center;
+  margin: .25em 0 .15em;
+}
+
+/* Positioned inner text */
+.innertext {
+  position: fixed;
+  left: calc(50% + 0px);
+  top: calc(50% + 0px + 0px);
+  transform: translate(-50%,-50%);
+  font-family: 'Pacifico', cursive;
+  font-weight: 800; text-transform: uppercase; letter-spacing: 1px;
+  font-size: clamp(42px, 7.0vw, 120px);
+  color: #FFFFFF;
+  text-align: center;
+  display: inline-block;
+  margin: 0;
+  z-index: 3;
+}
+
+/* Brand mark (right only, 3× larger) */
+.brand-logo {
+  position: fixed;
+  right: 2%;
+  bottom: 2%;
+  width: clamp(240px, 36vw, 540px);  /* 3× previous */
+  height: auto;
+  z-index: 4;
+  pointer-events: none;
+  filter: drop-shadow(0 4px 10px rgba(0,0,0,.6));
+  opacity: 0.95;
+}
+
+/* End overlay with centered brand logo */
+#endOverlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.92);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+}
+#endOverlay .end-brand {
+  width: clamp(320px, 40vw, 900px);
+  height: auto;
+  filter: drop-shadow(0 6px 22px rgba(0,0,0,.6));
+  opacity: 0.98;
+}
+
+
+h1, .innertext { -webkit-text-stroke: 3px #000;
+  text-shadow: 2px 2px 0 #000, -2px 2px 0 #000,
+               2px -2px 0 #000, -2px -2px 0 #000,
+               0 6px 16px rgba(0,0,0,.6); }
+
+
+h1, .innertext { text-shadow: 0 2px 10px rgba(0,0,0,.75); }
+
+
+.overlay {
+  position: fixed; inset: 0; pointer-events: none; z-index: 1;
+  background:
+    linear-gradient(to bottom, rgba(0,0,0,.55), rgba(0,0,0,0) 40%),
+    linear-gradient(to top,    rgba(0,0,0,.45), rgba(0,0,0,0) 45%);
+}
+body > * { position: relative; z-index: 2; }
+
+</style>
+</head>
+<body>
+<div class='overlay'></div>
+  <h1>Happy Birthday</h1>
+  <video autoplay muted loop id='myVideo'>
+    <source src="movie.mp4" type='video/mp4'>Video not found
+  </video>
+  <div class='innertext'>Tommy</div>
+  <img class='brand-logo' src="lte.gif" alt="Lazertag Extreme logo">
+  <div id="endOverlay"><img class="end-brand" src="lte.gif" alt="Lazertag Extreme logo"></div>
+<script>
+(function() {
+  var stopMs = 0;
+  if (stopMs > 0) {
+    setTimeout(function() {
+      try {
+        var v = document.getElementById('myVideo');
+        if (v) {
+          v.pause();
+          v.currentTime = 0;
+          v.muted = true;
+        }
+      } catch(e) {}
+      var ov = document.getElementById('endOverlay');
+      if (ov) {
+        ov.style.display = 'flex';
+      }
+    }, stopMs);
+  }
+})();
+</script>
+</body>
+</html>
