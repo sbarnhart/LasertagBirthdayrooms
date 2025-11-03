@@ -5,6 +5,7 @@ import webbrowser
 import configparser
 import sys
 from typing import Optional, Tuple
+import base64, mimetypes  # NEW
 
 # -----------------------------
 # Utility logic (CSS/video/color)
@@ -89,6 +90,39 @@ def rgba_str(hex_color: str, a: float) -> str:
     r,g,b = hex_to_rgb_tuple(hex_color)
     return f"rgba({r},{g},{b},{a})"
 
+# Convert local file paths to file:/// URIs if they exist
+def to_file_uri_if_exists(path_str: str, out_dir: Path) -> str:
+    """Return file:/// URI if local file exists (absolute or relative to out_dir); else original string."""
+    try:
+        p = Path(path_str)
+        if not p.is_absolute():
+            p = (out_dir / path_str)
+        if p.exists():
+            return p.resolve().as_uri()
+    except Exception:
+        pass
+    return path_str
+
+# Inline local images as data URIs (bullet-proof logo/bg)
+def path_to_data_uri(path_str: str, out_dir: Path) -> Optional[str]:
+    """
+    If path_str points to a local file (absolute or relative to out_dir),
+    return a data: URI. Otherwise return None.
+    """
+    try:
+        p = Path(path_str)
+        if not p.is_absolute():
+            p = (out_dir / path_str)
+        if p.exists() and p.is_file():
+            mime, _ = mimetypes.guess_type(str(p))
+            mime = mime or "application/octet-stream"
+            b = p.read_bytes()
+            b64 = base64.b64encode(b).decode("ascii")
+            return f"data:{mime};base64,{b64}"
+    except Exception:
+        pass
+    return None
+
 # ---------- Font includes / resolution ----------
 def resolve_inner_font(font_choice: str, local_font_path: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
     google_link_tag = None
@@ -112,7 +146,7 @@ def resolve_inner_font(font_choice: str, local_font_path: str) -> Tuple[Optional
             google_link_tag = f"<link href='https://fonts.googleapis.com/css2?family={google_family}&display=swap' rel='stylesheet'>"
     return inner_font_family, google_link_tag, local_face_css
 
-# --------- dynamic inline CSS (with size-aware Top gap + single right logo @ 3× + end overlay logo) ----------
+# --------- dynamic inline CSS ----------
 def make_inline_css(opts: dict, inner_font_family: Optional[str], local_face_css: Optional[str]) -> str:
     h_min, h_vw, h_max = HEADLINE_SIZES.get(opts.get("headline_size","Medium"), HEADLINE_SIZES["Medium"])
 
@@ -180,7 +214,7 @@ h1 {{
   position: fixed;
   right: 2%;
   bottom: 2%;
-  width: clamp(240px, 36vw, 540px);  /* 3× previous */
+  width: clamp(240px, 36vw, 540px);
   height: auto;
   z-index: 4;
   pointer-events: none;
@@ -188,7 +222,7 @@ h1 {{
   opacity: 0.95;
 }}
 
-/* End overlay with centered brand logo */
+/* End overlay with centered brand logo + room label */
 #endOverlay {{
   position: fixed; inset: 0;
   background: rgba(0,0,0,.92);
@@ -197,11 +231,26 @@ h1 {{
   justify-content: center;
   z-index: 10;
 }}
+#endOverlay .end-wrap {{
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: clamp(8px, 1.2vw, 18px);
+}}
 #endOverlay .end-brand {{
   width: clamp(320px, 40vw, 900px);
   height: auto;
   filter: drop-shadow(0 6px 22px rgba(0,0,0,.6));
   opacity: 0.98;
+}}
+#endOverlay .end-room-text {{
+  font-family: {title_font_stack};
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  font-size: clamp({int(h_min*0.6)}px, {h_vw*0.6}vw, {int(h_max*0.6)}px);
+  color: {title_color};
+  text-align: center;
 }}
 """)
 
@@ -270,6 +319,7 @@ def build_html(title_text: str, inner_text: str, css_file: str,
                style_opts: dict, font_head_extra: str,
                inner_font_family: Optional[str],
                local_face_css: Optional[str],
+               room_number: int,
                stop_minutes: int = 0) -> str:
     overlay_div = "<div class='overlay'></div>\n" if style_opts.get("overlay") else ""
     bg_tag = f"  <img src='{bg_src}' alt='background'>\n" if bg_src else ""
@@ -317,8 +367,15 @@ def build_html(title_text: str, inner_text: str, css_file: str,
     <source src="{video_file}" type='video/mp4'>Video not found
   </video>
   <div class='innertext'>{inner_text}</div>
-  <img class='brand-logo' src="{logo_img}" alt="Lazertag Extreme logo">
-  <div id="endOverlay"><img class="end-brand" src="{logo_img}" alt="Lazertag Extreme logo"></div>
+  <img class='brand-logo' src="{logo_img}" alt="LTE logo"
+       onerror="console.warn('Bottom logo failed to load:', this.src)" />
+  <div id="endOverlay">
+    <div class="end-wrap">
+      <img class="end-brand" src="{logo_img}" alt="LTE logo"
+           onerror="console.warn('End logo failed to load:', this.src)" />
+      <div class="end-room-text">Party Room {room_number}</div>
+    </div>
+  </div>
 {timer_script}
 </body>
 </html>"""
@@ -670,7 +727,7 @@ class RoomFrame(ttk.LabelFrame):
         except Exception:
             pass  # keep defaults
 
-    def build_and_write(self, out_dir: Path, filename: str) -> Optional[Path]:
+    def build_and_write(self, out_dir: Path, filename: str, room_number: int) -> Optional[Path]:
         if not self.enabled.get():
             return None
 
@@ -759,8 +816,30 @@ class RoomFrame(ttk.LabelFrame):
             "inner_offset_y": offy,
         }
 
+        # ---- Make assets robust ----
+        # Background: try inline image first (if local), else file:/// fallback; leave URLs as-is
+        if bg_src and not looks_like_url(bg_src):
+            inlined_bg = path_to_data_uri(bg_src, out_dir)
+            if inlined_bg:
+                bg_src = inlined_bg
+            else:
+                bg_src = to_file_uri_if_exists(bg_src, out_dir)
+
+        # Video: cannot inline; just ensure file:/// if local
+        if video_file and not looks_like_url(video_file):
+            video_file = to_file_uri_if_exists(video_file, out_dir)
+
+        # Logo: prefer inline image (guaranteed to show), else file:/// fallback
+        if logo_src and not looks_like_url(logo_src):
+            inlined_logo = path_to_data_uri(logo_src, out_dir)
+            if inlined_logo:
+                logo_src = inlined_logo
+            else:
+                logo_src = to_file_uri_if_exists(logo_src, out_dir)
+
         html = build_html(title, inner, css_file, bg_src, video_file,
                           logo_src, style_opts, font_head_extra, inner_font_family, local_face_css,
+                          room_number=room_number,
                           stop_minutes=stop_mins)
         out_dir.mkdir(parents=True, exist_ok=True)
         file_path = out_dir / filename
@@ -910,7 +989,7 @@ class PartyRoomBuilder(Tk):
             (self.room3, 3, "partyroom3.html"),
         ]
         for room_frame, idx, filename in mapping:
-            file_path = room_frame.build_and_write(out_dir, filename)
+            file_path = room_frame.build_and_write(out_dir, filename, idx)
             if file_path:
                 self.created_paths[idx] = file_path
 
