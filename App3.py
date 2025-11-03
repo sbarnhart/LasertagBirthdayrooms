@@ -90,7 +90,7 @@ def rgba_str(hex_color: str, a: float) -> str:
     return f"rgba({r},{g},{b},{a})"
 
 # ---------- Font includes / resolution ----------
-def resolve_inner_font(font_choice: str, local_font_path: str) -> Tuple[str, Optional[str], Optional[str]]:
+def resolve_inner_font(font_choice: str, local_font_path: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
     google_link_tag = None
     local_face_css = None
     inner_font_family = None
@@ -112,9 +112,8 @@ def resolve_inner_font(font_choice: str, local_font_path: str) -> Tuple[str, Opt
             google_link_tag = f"<link href='https://fonts.googleapis.com/css2?family={google_family}&display=swap' rel='stylesheet'>"
     return inner_font_family, google_link_tag, local_face_css
 
-# --------- dynamic inline CSS (center alignment + per-room colors + fancy font + positioning) ----------
+# --------- dynamic inline CSS (with size-aware Top gap + single right logo @ 3× + end overlay logo) ----------
 def make_inline_css(opts: dict, inner_font_family: Optional[str], local_face_css: Optional[str]) -> str:
-    """Title uses title font; inner text uses fancy/selected font. Colors are per-room. Forces centered alignment for text; .innertext positioned via presets."""
     h_min, h_vw, h_max = HEADLINE_SIZES.get(opts.get("headline_size","Medium"), HEADLINE_SIZES["Medium"])
 
     title_font_stack = '"Anton", Impact, "Montserrat ExtraBold", sans-serif'
@@ -129,8 +128,13 @@ def make_inline_css(opts: dict, inner_font_family: Optional[str], local_face_css
     off_x = int(opts.get("inner_offset_x", 0))
     off_y = int(opts.get("inner_offset_y", 0))
 
-    # transform to keep the label centered at the anchor point (except corners/edges adjust translate)
-    # We'll always use translate(-50%,-50%) for consistency (works well visually).
+    # Dynamic gap below title for Top presets (≈75% of headline size)
+    is_top = pos_name.startswith("Top")
+    gap_min = int(h_min * 0.75)
+    gap_vw  = h_vw * 0.75
+    gap_max = int(h_max * 0.75)
+    top_extra_css = f"clamp({gap_min}px, {gap_vw}vw, {gap_max}px)" if is_top else "0px"
+
     translate_css = "translate(-50%,-50%)"
 
     parts = []
@@ -159,7 +163,7 @@ h1 {{
 .innertext {{
   position: fixed;
   left: calc({x_pct}% + {off_x}px);
-  top: calc({y_pct}% + {off_y}px);
+  top: calc({y_pct}% + {off_y}px + {top_extra_css});
   transform: {translate_css};
   font-family: {inner_font_stack};
   font-weight: 800; text-transform: uppercase; letter-spacing: 1px;
@@ -169,6 +173,35 @@ h1 {{
   display: inline-block;
   margin: 0;
   z-index: 3;
+}}
+
+/* Brand mark (right only, 3× larger) */
+.brand-logo {{
+  position: fixed;
+  right: 2%;
+  bottom: 2%;
+  width: clamp(240px, 36vw, 540px);  /* 3× previous */
+  height: auto;
+  z-index: 4;
+  pointer-events: none;
+  filter: drop-shadow(0 4px 10px rgba(0,0,0,.6));
+  opacity: 0.95;
+}}
+
+/* End overlay with centered brand logo */
+#endOverlay {{
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.92);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+}}
+#endOverlay .end-brand {{
+  width: clamp(320px, 40vw, 900px);
+  height: auto;
+  filter: drop-shadow(0 6px 22px rgba(0,0,0,.6));
+  opacity: 0.98;
 }}
 """)
 
@@ -233,12 +266,42 @@ body > * { position: relative; z-index: 2; }
 
 def build_html(title_text: str, inner_text: str, css_file: str,
                bg_src: Optional[str], video_file: str,
+               logo_src: str,
                style_opts: dict, font_head_extra: str,
                inner_font_family: Optional[str],
-               local_face_css: Optional[str]) -> str:
+               local_face_css: Optional[str],
+               stop_minutes: int = 0) -> str:
     overlay_div = "<div class='overlay'></div>\n" if style_opts.get("overlay") else ""
     bg_tag = f"  <img src='{bg_src}' alt='background'>\n" if bg_src else ""
     inline_css = make_inline_css(style_opts, inner_font_family, local_face_css)
+    logo_img = logo_src or "lte.gif"
+
+    # Inline JS for auto-stop: pause + reset video, show logo overlay
+    stop_ms = max(0, int(stop_minutes)) * 60 * 1000
+    timer_script = f"""
+<script>
+(function() {{
+  var stopMs = {stop_ms};
+  if (stopMs > 0) {{
+    setTimeout(function() {{
+      try {{
+        var v = document.getElementById('myVideo');
+        if (v) {{
+          v.pause();
+          v.currentTime = 0;
+          v.muted = true;
+        }}
+      }} catch(e) {{}}
+      var ov = document.getElementById('endOverlay');
+      if (ov) {{
+        ov.style.display = 'flex';
+      }}
+    }}, stopMs);
+  }}
+}})();
+</script>
+""".strip()
+
     return f"""<!doctype html>
 <html>
 <head>
@@ -254,6 +317,9 @@ def build_html(title_text: str, inner_text: str, css_file: str,
     <source src="{video_file}" type='video/mp4'>Video not found
   </video>
   <div class='innertext'>{inner_text}</div>
+  <img class='brand-logo' src="{logo_img}" alt="Lazertag Extreme logo">
+  <div id="endOverlay"><img class="end-brand" src="{logo_img}" alt="Lazertag Extreme logo"></div>
+{timer_script}
 </body>
 </html>"""
 
@@ -287,27 +353,41 @@ class RoomFrame(ttk.LabelFrame):
         for c in COLORS:
             ttk.Radiobutton(col_frame, text=c, value=c, variable=self.color).pack(side="left", padx=(0,6))
 
-        # Video radios
-        ttk.Label(self, text="Video:").grid(row=4, column=0, sticky="e")
+        # hidden default video index for compatibility
         self.video_sel = IntVar(value=1)
-        vid_frame = ttk.Frame(self); vid_frame.grid(row=4, column=1, columnspan=11, sticky="w")
-        for val, (_, label) in VIDEO_OPTIONS.items():
-            ttk.Radiobutton(vid_frame, text=label, value=val, variable=self.video_sel).pack(side="left", padx=(0,6))
 
-        # Background image path
-        ttk.Label(self, text="Background image:").grid(row=5, column=0, sticky="e")
-        self.bg_var = StringVar(value="")
-        ttk.Entry(self, textvariable=self.bg_var, width=40).grid(row=5, column=1, columnspan=10, sticky="we", padx=5, pady=2)
-        ttk.Button(self, text="Browse…", command=self.browse_bg).grid(row=5, column=11, sticky="w")
+        # --- Advanced toggle & container ---
+        self.adv_shown = BooleanVar(value=False)
+        adv_btn = ttk.Button(self, text="Advanced…", command=self.toggle_advanced)
+        adv_btn.grid(row=4, column=0, sticky="w", pady=(6,2))
 
-        # Video override path
-        ttk.Label(self, text="Video override:").grid(row=6, column=0, sticky="e")
+        self.adv_frame = ttk.Frame(self)
+        self.adv_frame.grid(row=5, column=0, columnspan=12, sticky="we")
+        self.adv_frame.grid_remove()  # hidden by default
+
+        # ---- Advanced content ----
+        r = 0
+        ttk.Label(self.adv_frame, text="Video override:").grid(row=r, column=0, sticky="e")
         self.video_override_var = StringVar(value="")
-        ttk.Entry(self, textvariable=self.video_override_var, width=40).grid(row=6, column=1, columnspan=10, sticky="we", padx=5, pady=2)
-        ttk.Button(self, text="Browse…", command=self.browse_video).grid(row=6, column=11, sticky="w")
+        ttk.Entry(self.adv_frame, textvariable=self.video_override_var, width=40).grid(row=r, column=1, columnspan=10, sticky="we", padx=5, pady=2)
+        ttk.Button(self.adv_frame, text="Browse…", command=self.browse_video).grid(row=r, column=11, sticky="w")
+        r += 1
+
+        ttk.Label(self.adv_frame, text="Background image:").grid(row=r, column=0, sticky="e")
+        self.bg_var = StringVar(value="")
+        ttk.Entry(self.adv_frame, textvariable=self.bg_var, width=40).grid(row=r, column=1, columnspan=10, sticky="we", padx=5, pady=2)
+        ttk.Button(self.adv_frame, text="Browse…", command=self.browse_bg).grid(row=r, column=11, sticky="w")
+        r += 1
+
+        # Logo file picker
+        ttk.Label(self.adv_frame, text="Logo image:").grid(row=r, column=0, sticky="e")
+        self.logo_path_var = StringVar(value="lte.gif")
+        ttk.Entry(self.adv_frame, textvariable=self.logo_path_var, width=40).grid(row=r, column=1, columnspan=10, sticky="we", padx=5, pady=2)
+        ttk.Button(self.adv_frame, text="Browse…", command=self.browse_logo).grid(row=r, column=11, sticky="w")
+        r += 1
 
         # ---- Style toggles ----
-        ttk.Label(self, text="Style:").grid(row=7, column=0, sticky="e")
+        ttk.Label(self.adv_frame, text="Style:").grid(row=r, column=0, sticky="e")
         self.headline_outline = BooleanVar(value=True)
         self.neon_glow = BooleanVar(value=False)
         self.readable_shadow = BooleanVar(value=True)
@@ -315,99 +395,132 @@ class RoomFrame(ttk.LabelFrame):
         self.overlay = BooleanVar(value=True)
         self.dim_video = BooleanVar(value=False)
 
-        style_frame = ttk.Frame(self); style_frame.grid(row=7, column=1, columnspan=11, sticky="w")
+        style_frame = ttk.Frame(self.adv_frame); style_frame.grid(row=r, column=1, columnspan=11, sticky="w")
         ttk.Checkbutton(style_frame, text="Headline Outline", variable=self.headline_outline).pack(side="left", padx=6)
         ttk.Checkbutton(style_frame, text="Neon Glow", variable=self.neon_glow).pack(side="left", padx=6)
         ttk.Checkbutton(style_frame, text="Readable Shadow", variable=self.readable_shadow).pack(side="left", padx=6)
-        style_frame2 = ttk.Frame(self); style_frame2.grid(row=8, column=1, columnspan=11, sticky="w", pady=(2,6))
+        r += 1
+
+        style_frame2 = ttk.Frame(self.adv_frame); style_frame2.grid(row=r, column=1, columnspan=11, sticky="w", pady=(2,6))
         ttk.Checkbutton(style_frame2, text="Pill Panel (Guest)", variable=self.pill_panel).pack(side="left", padx=6)
         ttk.Checkbutton(style_frame2, text="Top/Bottom Overlay", variable=self.overlay).pack(side="left", padx=6)
         ttk.Checkbutton(style_frame2, text="Dim Video", variable=self.dim_video).pack(side="left", padx=6)
+        r += 1
 
         # Preset buttons
-        preset_frame = ttk.Frame(self); preset_frame.grid(row=9, column=1, columnspan=11, sticky="w", pady=(0,6))
+        preset_frame = ttk.Frame(self.adv_frame); preset_frame.grid(row=r, column=1, columnspan=11, sticky="w", pady=(0,6))
         ttk.Button(preset_frame, text="Preset: High Contrast", command=self.preset_high_contrast).pack(side="left", padx=4)
         ttk.Button(preset_frame, text="Preset: Neon", command=self.preset_neon).pack(side="left", padx=4)
         ttk.Button(preset_frame, text="Preset: Panel", command=self.preset_panel).pack(side="left", padx=4)
+        r += 1
 
         # ---- Font size (title drives both) ----
-        ttk.Label(self, text="Headline Size:").grid(row=10, column=0, sticky="e")
+        ttk.Label(self.adv_frame, text="Headline Size:").grid(row=r, column=0, sticky="e")
         self.headline_size = StringVar(value="Medium")
-        self.headline_combo = ttk.Combobox(self, textvariable=self.headline_size, values=list(HEADLINE_SIZES.keys()), state="readonly", width=10)
-        self.headline_combo.grid(row=10, column=1, sticky="w", padx=5, pady=(0,6))
+        self.headline_combo = ttk.Combobox(self.adv_frame, textvariable=self.headline_size, values=list(HEADLINE_SIZES.keys()), state="readonly", width=10)
+        self.headline_combo.grid(row=r, column=1, sticky="w", padx=5, pady=(0,6))
+        r += 1
 
         # ---- Fancy font for inner text ----
-        ttk.Label(self, text="Guest Font:").grid(row=10, column=2, sticky="e")
+        ttk.Label(self.adv_frame, text="Guest Font:").grid(row=r, column=0, sticky="e")
         self.inner_font_choice = StringVar(value="Pacifico")
-        self.inner_font_combo = ttk.Combobox(self, textvariable=self.inner_font_choice, values=list(FANCY_FONTS.keys()), state="readonly", width=22)
-        self.inner_font_combo.grid(row=10, column=3, sticky="w", padx=5, pady=(0,6))
+        self.inner_font_combo = ttk.Combobox(self.adv_frame, textvariable=self.inner_font_choice, values=list(FANCY_FONTS.keys()), state="readonly", width=22)
+        self.inner_font_combo.grid(row=r, column=1, sticky="w", padx=5, pady=(0,6))
+        r += 1
 
-        ttk.Label(self, text="Local font (optional):").grid(row=11, column=0, sticky="e")
+        ttk.Label(self.adv_frame, text="Local font (optional):").grid(row=r, column=0, sticky="e")
         self.inner_font_local = StringVar(value="")
-        ttk.Entry(self, textvariable=self.inner_font_local, width=40).grid(row=11, column=1, columnspan=10, sticky="we", padx=5, pady=2)
-        ttk.Button(self, text="Browse…", command=self.browse_local_font).grid(row=11, column=11, sticky="w")
+        ttk.Entry(self.adv_frame, textvariable=self.inner_font_local, width=40).grid(row=r, column=1, columnspan=10, sticky="we", padx=5, pady=2)
+        ttk.Button(self.adv_frame, text="Browse…", command=self.browse_local_font).grid(row=r, column=11, sticky="w")
+        r += 1
 
         # ---- Title / Inner colors + link toggle + swatches ----
-        ttk.Label(self, text="Title Color:").grid(row=12, column=0, sticky="e")
+        ttk.Label(self.adv_frame, text="Title Color:").grid(row=r, column=0, sticky="e")
         self.title_color = StringVar(value="#FFFFFF")
-        # tk.Button so we can set bg/fg (ttk.Button can't)
-        self.title_color_btn = Button(self, text=self.title_color.get(), command=self.pick_title_color, width=12)
-        self.title_color_btn.grid(row=12, column=1, sticky="w", padx=5, pady=(2,6))
+        self.title_color_btn = Button(self.adv_frame, text=self.title_color.get(), command=self.pick_title_color, width=12)
+        self.title_color_btn.grid(row=r, column=1, sticky="w", padx=5, pady=(2,6))
 
-        ttk.Label(self, text="Inner Color:").grid(row=12, column=2, sticky="e")
+        ttk.Label(self.adv_frame, text="Inner Color:").grid(row=r, column=2, sticky="e")
         self.inner_color = StringVar(value="#FFFFFF")
-        self.inner_color_btn = Button(self, text=self.inner_color.get(), command=self.pick_inner_color, width=12)
-        self.inner_color_btn.grid(row=12, column=3, sticky="w", padx=5, pady=(2,6))
+        self.inner_color_btn = Button(self.adv_frame, text=self.inner_color.get(), command=self.pick_inner_color, width=12)
+        self.inner_color_btn.grid(row=r, column=3, sticky="w", padx=5, pady=(2,6))
 
         self.link_colors = BooleanVar(value=True)
-        ttk.Checkbutton(self, text="Same color for Title & Inner", variable=self.link_colors,
-                        command=self._refresh_color_buttons).grid(row=12, column=4, sticky="w", padx=8)
+        ttk.Checkbutton(self.adv_frame, text="Same color for Title & Inner", variable=self.link_colors,
+                        command=self._refresh_color_buttons).grid(row=r, column=4, sticky="w", padx=8)
+        r += 1
 
         # ---- Inner text position controls ----
-        ttk.Label(self, text="Inner Position:").grid(row=13, column=0, sticky="e")
+        ttk.Label(self.adv_frame, text="Inner Position:").grid(row=r, column=0, sticky="e")
         self.inner_pos = StringVar(value="Center")
-        self.inner_pos_combo = ttk.Combobox(self, textvariable=self.inner_pos, values=INNER_POS_PRESETS,
+        self.inner_pos_combo = ttk.Combobox(self.adv_frame, textvariable=self.inner_pos, values=INNER_POS_PRESETS,
                                             state="readonly", width=16)
-        self.inner_pos_combo.grid(row=13, column=1, sticky="w", padx=5, pady=(2,6))
+        self.inner_pos_combo.grid(row=r, column=1, sticky="w", padx=5, pady=(2,6))
 
-        ttk.Label(self, text="Offset X (px):").grid(row=13, column=2, sticky="e")
+        ttk.Label(self.adv_frame, text="Offset X (px):").grid(row=r, column=2, sticky="e")
         self.inner_off_x = StringVar(value="0")
-        ttk.Entry(self, textvariable=self.inner_off_x, width=8).grid(row=13, column=3, sticky="w", padx=5)
+        ttk.Entry(self.adv_frame, textvariable=self.inner_off_x, width=8).grid(row=r, column=3, sticky="w", padx=5)
 
-        ttk.Label(self, text="Offset Y (px):").grid(row=13, column=4, sticky="e")
+        ttk.Label(self.adv_frame, text="Offset Y (px):").grid(row=r, column=4, sticky="e")
         self.inner_off_y = StringVar(value="0")
-        ttk.Entry(self, textvariable=self.inner_off_y, width=8).grid(row=13, column=5, sticky="w", padx=5)
+        ttk.Entry(self.adv_frame, textvariable=self.inner_off_y, width=8).grid(row=r, column=5, sticky="w", padx=5)
+        r += 1
 
-        # Expand grid
+        # ---- Auto-stop minutes ----
+        ttk.Label(self.adv_frame, text="Auto-stop (minutes):").grid(row=r, column=0, sticky="e")
+        self.stop_minutes = StringVar(value="0")
+        ttk.Entry(self.adv_frame, textvariable=self.stop_minutes, width=10).grid(row=r, column=1, sticky="w", padx=5, pady=(2,6))
+        r += 1
+
+        # Expand grid weights
         for i in range(12):
             self.columnconfigure(i, weight=1)
+            self.adv_frame.columnconfigure(i, weight=1)
 
-        # Initial UI sync
         self._refresh_color_buttons()
+
+    def toggle_advanced(self):
+        self.adv_shown.set(not self.adv_shown.get())
+        if self.adv_shown.get():
+            self.adv_frame.grid()
+        else:
+            self.adv_frame.grid_remove()
 
     # ---- presets
     def preset_high_contrast(self):
-        self.headline_outline.set(True); self.readable_shadow.set(True)
-        self.neon_glow.set(False); self.pill_panel.set(False)
-        self.overlay.set(True); self.dim_video.set(True)
+        self.headline_outline.set(True)
+        self.readable_shadow.set(True)
+        self.neon_glow.set(False)
+        self.pill_panel.set(False)
+        self.overlay.set(True)
+        self.dim_video.set(True)
         self.inner_color.set("#FFFFFF")
-        if self.link_colors.get(): self.title_color.set("#FFFFFF")
+        if self.link_colors.get():
+            self.title_color.set("#FFFFFF")
         self._refresh_color_buttons()
 
     def preset_neon(self):
-        self.headline_outline.set(False); self.readable_shadow.set(True)
-        self.neon_glow.set(True); self.pill_panel.set(False)
-        self.overlay.set(True); self.dim_video.set(True)
+        self.headline_outline.set(False)
+        self.readable_shadow.set(True)
+        self.neon_glow.set(True)
+        self.pill_panel.set(False)
+        self.overlay.set(True)
+        self.dim_video.set(True)
         self.inner_color.set("#7FFF00")
-        if self.link_colors.get(): self.title_color.set("#7FFF00")
+        if self.link_colors.get():
+            self.title_color.set("#7FFF00")
         self._refresh_color_buttons()
 
     def preset_panel(self):
-        self.headline_outline.set(False); self.readable_shadow.set(True)
-        self.neon_glow.set(False); self.pill_panel.set(True)
-        self.overlay.set(True); self.dim_video.set(False)
+        self.headline_outline.set(False)
+        self.readable_shadow.set(True)
+        self.neon_glow.set(False)
+        self.pill_panel.set(True)
+        self.overlay.set(True)
+        self.dim_video.set(False)
         self.inner_color.set("#FFFFFF")
-        if self.link_colors.get(): self.title_color.set("#FFFFFF")
+        if self.link_colors.get():
+            self.title_color.set("#FFFFFF")
         self._refresh_color_buttons()
 
     # ---- file pickers
@@ -426,6 +539,14 @@ class RoomFrame(ttk.LabelFrame):
         )
         if path:
             self.video_override_var.set(path)
+
+    def browse_logo(self):
+        path = filedialog.askopenfilename(
+            title="Choose logo image",
+            filetypes=[("Images", "*.png;*.jpg;*.jpeg;*.gif;*.webp"), ("All files", "*.*")]
+        )
+        if path:
+            self.logo_path_var.set(path)
 
     def browse_local_font(self):
         path = filedialog.askopenfilename(
@@ -456,7 +577,6 @@ class RoomFrame(ttk.LabelFrame):
             self._refresh_color_buttons()
 
     def _apply_btn_color(self, btn: Button, hexval: str):
-        # Choose foreground for legibility
         r,g,b = hex_to_rgb_tuple(hexval)
         brightness = (r*299 + g*587 + b*114) / 1000
         fg = "#000000" if brightness > 155 else "#FFFFFF"
@@ -468,7 +588,6 @@ class RoomFrame(ttk.LabelFrame):
             self.title_color_btn.config(state="disabled")
         else:
             self.title_color_btn.config(state="normal")
-        # update swatches & text
         self._apply_btn_color(self.inner_color_btn, self.inner_color.get())
         self._apply_btn_color(self.title_color_btn, self.title_color.get())
 
@@ -479,9 +598,10 @@ class RoomFrame(ttk.LabelFrame):
             "title": self.title_entry.get(),
             "inner": self.inner_entry.get(),
             "color": self.color.get(),
-            "video": str(self.video_sel.get()),
+            "video": str(self.video_sel.get()),  # legacy
             "bg": self.bg_var.get(),
             "video_override": self.video_override_var.get(),
+            "logo_path": self.logo_path_var.get(),
             "headline_outline": str(self.headline_outline.get()),
             "neon_glow": str(self.neon_glow.get()),
             "readable_shadow": str(self.readable_shadow.get()),
@@ -497,21 +617,34 @@ class RoomFrame(ttk.LabelFrame):
             "inner_pos": self.inner_pos.get(),
             "inner_offset_x": self.inner_off_x.get(),
             "inner_offset_y": self.inner_off_y.get(),
+            "stop_minutes": self.stop_minutes.get(),
         }
 
     def set_state(self, state: dict):
         try:
             if "enabled" in state: self.enabled.set(str(state["enabled"]).lower() == "true")
-            if "title" in state: self.title_entry.delete(0, END); self.title_entry.insert(0, state["title"])
-            if "inner" in state: self.inner_entry.delete(0, END); self.inner_entry.insert(0, state["inner"])
-            if "color" in state and state["color"] in COLORS: self.color.set(state["color"])
+            if "title" in state:
+                self.title_entry.delete(0, END); self.title_entry.insert(0, state["title"])
+            if "inner" in state:
+                self.inner_entry.delete(0, END); self.inner_entry.insert(0, state["inner"])
+            if "color" in state and state["color"] in COLORS:
+                self.color.set(state["color"])
+
             if "video" in state:
-                v = int(state["video"])
-                if v in VIDEO_OPTIONS: self.video_sel.set(v)
+                try:
+                    v = int(state["video"])
+                    if v in VIDEO_OPTIONS: self.video_sel.set(v)
+                except Exception:
+                    pass
+
             if "bg" in state: self.bg_var.set(state["bg"])
             if "video_override" in state: self.video_override_var.set(state["video_override"])
+            if "logo_path" in state and state["logo_path"]:
+                self.logo_path_var.set(state["logo_path"])
+
             for k in ("headline_outline","neon_glow","readable_shadow","pill_panel","overlay","dim_video"):
                 if k in state: getattr(self, k).set(str(state[k]).lower()=="true")
+
             if "headline_size" in state and state["headline_size"] in HEADLINE_SIZES:
                 self.headline_size.set(state["headline_size"])
             if "inner_font_choice" in state and state["inner_font_choice"] in FANCY_FONTS:
@@ -530,6 +663,9 @@ class RoomFrame(ttk.LabelFrame):
                 self.inner_off_x.set(state["inner_offset_x"])
             if "inner_offset_y" in state:
                 self.inner_off_y.set(state["inner_offset_y"])
+            if "stop_minutes" in state:
+                self.stop_minutes.set(state["stop_minutes"])
+
             self._refresh_color_buttons()
         except Exception:
             pass  # keep defaults
@@ -567,6 +703,17 @@ class RoomFrame(ttk.LabelFrame):
                 if bp.exists() or (out_dir / bg_input).exists():
                     bg_src = bg_input
 
+        # Logo (optional override)
+        logo_input = (self.logo_path_var.get() or "").strip()
+        logo_src: str = "lte.gif"
+        if logo_input:
+            if looks_like_url(logo_input):
+                logo_src = logo_input
+            else:
+                lp = Path(logo_input)
+                if lp.exists() or (out_dir / logo_input).exists():
+                    logo_src = logo_input
+
         # Fancy font for inner name
         font_choice = self.inner_font_choice.get()
         local_font = self.inner_font_local.get()
@@ -589,6 +736,14 @@ class RoomFrame(ttk.LabelFrame):
         except Exception:
             offy = 0
 
+        # parse stop minutes safely
+        try:
+            stop_mins = int(self.stop_minutes.get().strip() or "0")
+            if stop_mins < 0:
+                stop_mins = 0
+        except Exception:
+            stop_mins = 0
+
         style_opts = {
             "headline_outline": self.headline_outline.get(),
             "neon_glow": self.neon_glow.get(),
@@ -605,7 +760,8 @@ class RoomFrame(ttk.LabelFrame):
         }
 
         html = build_html(title, inner, css_file, bg_src, video_file,
-                          style_opts, font_head_extra, inner_font_family, local_face_css)
+                          logo_src, style_opts, font_head_extra, inner_font_family, local_face_css,
+                          stop_minutes=stop_mins)
         out_dir.mkdir(parents=True, exist_ok=True)
         file_path = out_dir / filename
         file_path.write_text(html, encoding="utf-8")
@@ -618,7 +774,7 @@ class PartyRoomBuilder(Tk):
     def __init__(self):
         super().__init__()
         self.title("🎉 Party Room Pages Builder (3 Rooms) 🎉")
-        self.geometry("1100x860")
+        self.geometry("1100x900")
 
         # Config paths
         self.app_dir = Path(getattr(sys, "_MEIPASS", Path(__file__).parent)).resolve()
@@ -665,7 +821,7 @@ class PartyRoomBuilder(Tk):
 
         ttk.Label(
             self,
-            text="Tip: Use 'Inner Position' + offsets to place the name anywhere. Color buttons show live hex + swatch.",
+            text="Tip: Advanced → Background, Video override, Logo image, fonts, colors, position, and Auto-stop minutes.",
             foreground="#444"
         ).pack(padx=10, pady=(0,10), anchor="w")
 
@@ -692,6 +848,7 @@ class PartyRoomBuilder(Tk):
                         "video": self.config.get(sect, "video", fallback="1"),
                         "bg": self.config.get(sect, "bg", fallback=""),
                         "video_override": self.config.get(sect, "video_override", fallback=""),
+                        "logo_path": self.config.get(sect, "logo_path", fallback="lte.gif"),
                         "headline_outline": self.config.get(sect, "headline_outline", fallback="True"),
                         "neon_glow": self.config.get(sect, "neon_glow", fallback="False"),
                         "readable_shadow": self.config.get(sect, "readable_shadow", fallback="True"),
@@ -707,6 +864,7 @@ class PartyRoomBuilder(Tk):
                         "inner_pos": self.config.get(sect, "inner_pos", fallback="Center"),
                         "inner_offset_x": self.config.get(sect, "inner_offset_x", fallback="0"),
                         "inner_offset_y": self.config.get(sect, "inner_offset_y", fallback="0"),
+                        "stop_minutes": self.config.get(sect, "stop_minutes", fallback="0"),
                     }
                     for k in ("enabled","headline_outline","neon_glow","readable_shadow","pill_panel","overlay","dim_video"):
                         state[k] = "True" if str(state[k]).lower()=="true" else "False"
